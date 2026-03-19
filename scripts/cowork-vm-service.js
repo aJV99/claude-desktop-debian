@@ -870,7 +870,8 @@ class BwrapBackend extends LocalBackend {
 const VM_BASE_DIR = path.join(os.homedir(), '.local/share/claude-desktop/vm');
 const VM_SESSION_DIR = path.join(VM_BASE_DIR, 'sessions');
 const VSOCK_GUEST_PORT = 51234;  // 0xC822 — matches guest sdk-daemon
-const VIRTIOFS_GUEST_MOUNT = '/mnt/.virtiofs-root';
+const HOME_SHARE_MOUNT_TAG = 'claudeshared';
+const HOME_SHARE_GUEST_MOUNT = '/mnt/.virtiofs-root';
 const QMP_CAPABILITIES = JSON.stringify({ execute: 'qmp_capabilities' });
 
 /** Event types forwarded from the guest sdk-daemon to subscribers. */
@@ -887,6 +888,7 @@ class KvmBackend extends BackendBase {
         this.guestConnected = false;
         this.qemuProcess = null;
         this.virtiofsdProcess = null;
+        this.homeShareType = null; // 'virtiofs', '9p', or null
         this.socatProcess = null;
         this.sessionDir = null;
         this.monitorSock = null;
@@ -1019,7 +1021,9 @@ class KvmBackend extends BackendBase {
         const vmlinuzPath = path.join(bundleDir, 'vmlinuz');
         const initrdPath = path.join(bundleDir, 'initrd');
 
-        // Start virtiofsd for home directory share (if available)
+        // Start home directory share for guest VM.
+        // Try virtiofsd first (best performance), fall back to virtio-9p
+        // (built into QEMU, no daemon needed, works unprivileged).
         const virtiofsSock = path.join(this.sessionDir, 'virtiofs.sock');
         try {
             this.virtiofsdProcess = spawnProcess('virtiofsd', [
@@ -1037,13 +1041,17 @@ class KvmBackend extends BackendBase {
 
             // Wait for virtiofsd to create its socket before starting QEMU
             const vfsWaitStart = Date.now();
-            while (!fs.existsSync(virtiofsSock) && Date.now() - vfsWaitStart < 5000) {
+            while (!fs.existsSync(virtiofsSock) &&
+                   Date.now() - vfsWaitStart < 5000) {
                 await new Promise(r => setTimeout(r, 100));
             }
             if (fs.existsSync(virtiofsSock)) {
-                log(`KvmBackend: virtiofsd socket ready (${Date.now() - vfsWaitStart}ms)`);
+                log('KvmBackend: virtiofsd socket ready ' +
+                    `(${Date.now() - vfsWaitStart}ms)`);
+                this.homeShareType = 'virtiofs';
             } else {
-                logError('KvmBackend: virtiofsd socket not ready after 5s, proceeding without virtiofs');
+                log('KvmBackend: virtiofsd socket not ready ' +
+                    'after 5s, will try virtio-9p fallback');
                 this.virtiofsdProcess.kill();
                 this.virtiofsdProcess = null;
             }
@@ -1052,10 +1060,18 @@ class KvmBackend extends BackendBase {
             this.virtiofsdProcess = null;
         }
 
+        // Fallback: use virtio-9p if virtiofsd failed. virtio-9p is
+        // built into QEMU — no external daemon, no privileges needed.
+        // Lower performance than virtiofs but works everywhere.
+        if (!this.virtiofsdProcess) {
+            log('KvmBackend: using virtio-9p for home directory share');
+            this.homeShareType = '9p';
+        }
+
         // Build QEMU arguments
         // When virtiofs is used, QEMU requires shared memory backend for
         // vhost-user-fs-pci. Use memory-backend-memfd with share=on.
-        const useSharedMem = !!this.virtiofsdProcess;
+        const useSharedMem = this.homeShareType === 'virtiofs';
         const qemuArgs = [
             '-enable-kvm',
             ...(useSharedMem
@@ -1148,11 +1164,22 @@ class KvmBackend extends BackendBase {
             '-device', 'virtio-net-pci,netdev=net0'
         );
 
-        // virtiofs char device (if virtiofsd is running)
-        if (this.virtiofsdProcess) {
+        // Home directory share device
+        if (this.homeShareType === 'virtiofs') {
+            // virtiofs: high performance, requires virtiofsd daemon
             qemuArgs.push(
                 '-chardev', `socket,id=virtiofs,path=${virtiofsSock}`,
-                '-device', 'vhost-user-fs-pci,chardev=virtiofs,tag=claudeshared',
+                '-device',
+                `vhost-user-fs-pci,chardev=virtiofs,tag=${HOME_SHARE_MOUNT_TAG}`,
+            );
+        } else if (this.homeShareType === '9p') {
+            // virtio-9p: built into QEMU, no daemon, works unprivileged.
+            // security_model=none: like passthrough but ignores chown
+            // failures — designed for unprivileged QEMU operation.
+            qemuArgs.push(
+                '-virtfs',
+                `local,path=${os.homedir()},mount_tag=${HOME_SHARE_MOUNT_TAG}` +
+                ',security_model=none,id=hostshare',
             );
         }
 
@@ -1531,6 +1558,7 @@ class KvmBackend extends BackendBase {
         cleanup(this._guestConn, 'destroy');
         cleanup(this._bridgeServer, 'close');
         this.virtiofsdProcess = null;
+        this.homeShareType = null;
         this.socatProcess = null;
         this._qmpClient = null;
         this._guestConn = null;
@@ -1629,15 +1657,17 @@ class KvmBackend extends BackendBase {
         const { subpath, mountName } = params;
         log(`KvmBackend mountPath: ${mountName} -> ${subpath}`);
 
-        if (this.virtiofsdProcess) {
-            // virtiofs is active — guest can access host files via mount
-            const guestPath = path.join(VIRTIOFS_GUEST_MOUNT, subpath || '');
+        if (this.homeShareType) {
+            // Home share active (virtiofs or 9p) — guest accesses
+            // host files via the shared mount
+            const guestPath =
+                path.join(HOME_SHARE_GUEST_MOUNT, subpath || '');
             return { guestPath };
         }
 
-        // Fallback: return host path with a warning
+        // No home share — return host path with a warning
         const hostPath = path.join(os.homedir(), subpath || '');
-        log('KvmBackend: virtiofs not available, returning host path');
+        log('KvmBackend: no home share, returning host path');
         return { guestPath: hostPath };
     }
 
@@ -1679,7 +1709,7 @@ class KvmBackend extends BackendBase {
         );
         if (resolved) {
             this.sdkBinaryPath = resolved;
-            // Compute the guest-side path via virtiofs mount
+            // Compute the guest-side path via home share mount
             const homeDir = os.homedir();
             const relPath = path.relative(homeDir, resolved);
             if (relPath.startsWith('..')) {
@@ -1687,7 +1717,7 @@ class KvmBackend extends BackendBase {
                     ` cannot map to guest: ${resolved}`);
             } else {
                 this.guestSdkPath = path.join(
-                    VIRTIOFS_GUEST_MOUNT, relPath
+                    HOME_SHARE_GUEST_MOUNT, relPath
                 );
                 log(`KvmBackend: guest SDK path: ${this.guestSdkPath}`);
             }
