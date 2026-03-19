@@ -870,8 +870,8 @@ class BwrapBackend extends LocalBackend {
 const VM_BASE_DIR = path.join(os.homedir(), '.local/share/claude-desktop/vm');
 const VM_SESSION_DIR = path.join(VM_BASE_DIR, 'sessions');
 const VSOCK_GUEST_PORT = 51234;  // 0xC822 — matches guest sdk-daemon
-const VIRTIOFS_GUEST_MOUNT = '/mnt/.virtiofs-root';
-const VIRTIO9P_MOUNT_TAG = 'claudeshared';
+const HOME_SHARE_MOUNT_TAG = 'claudeshared';
+const HOME_SHARE_GUEST_MOUNT = '/mnt/.virtiofs-root';
 const QMP_CAPABILITIES = JSON.stringify({ execute: 'qmp_capabilities' });
 
 /** Event types forwarded from the guest sdk-daemon to subscribers. */
@@ -1170,13 +1170,13 @@ class KvmBackend extends BackendBase {
             qemuArgs.push(
                 '-chardev', `socket,id=virtiofs,path=${virtiofsSock}`,
                 '-device',
-                'vhost-user-fs-pci,chardev=virtiofs,tag=claudeshared',
+                `vhost-user-fs-pci,chardev=virtiofs,tag=${HOME_SHARE_MOUNT_TAG}`,
             );
         } else if (this.homeShareType === '9p') {
             // virtio-9p: built into QEMU, no daemon, works unprivileged
             qemuArgs.push(
                 '-virtfs',
-                `local,path=${os.homedir()},mount_tag=${VIRTIO9P_MOUNT_TAG}` +
+                `local,path=${os.homedir()},mount_tag=${HOME_SHARE_MOUNT_TAG}` +
                 ',security_model=mapped-xattr,id=hostshare',
             );
         }
@@ -1659,7 +1659,7 @@ class KvmBackend extends BackendBase {
             // Home share active (virtiofs or 9p) — guest accesses
             // host files via the shared mount
             const guestPath =
-                path.join(VIRTIOFS_GUEST_MOUNT, subpath || '');
+                path.join(HOME_SHARE_GUEST_MOUNT, subpath || '');
             return { guestPath };
         }
 
@@ -1715,7 +1715,7 @@ class KvmBackend extends BackendBase {
                     ` cannot map to guest: ${resolved}`);
             } else {
                 this.guestSdkPath = path.join(
-                    VIRTIOFS_GUEST_MOUNT, relPath
+                    HOME_SHARE_GUEST_MOUNT, relPath
                 );
                 log(`KvmBackend: guest SDK path: ${this.guestSdkPath}`);
             }
