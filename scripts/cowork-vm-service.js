@@ -842,8 +842,9 @@ class BwrapBackend extends LocalBackend {
         // host directories at guest paths, matching the KVM backend
         // layout. The claude-code-vm binary translates all paths to
         // /sessions/ internally, so these must exist inside the sandbox.
-        const sessionMnt = `/sessions/${name}/mnt`;
-        bwrapArgs.push('--dir', `/sessions/${name}`);
+        const sessionDir = `/sessions/${name}`;
+        const sessionMnt = `${sessionDir}/mnt`;
+        bwrapArgs.push('--dir', sessionDir);
         bwrapArgs.push('--dir', sessionMnt);
 
         // Bind mounts from mountPath() calls (writable)
@@ -861,9 +862,7 @@ class BwrapBackend extends LocalBackend {
         for (const [mountName, hostPath] of Object.entries(mountMap)) {
             if (boundPaths.has(hostPath)) continue;
             try {
-                if (!fs.existsSync(hostPath)) {
-                    fs.mkdirSync(hostPath, { recursive: true });
-                }
+                fs.mkdirSync(hostPath, { recursive: true });
             } catch (e) {
                 log(`BwrapBackend spawn: could not create ${hostPath}: ${e.message}`);
                 continue;
@@ -881,17 +880,16 @@ class BwrapBackend extends LocalBackend {
         // If it already contains /mnt/, use it directly; otherwise append
         // the first user mount to land inside the project directory.
         const rawCwd = params.cwd || '';
-        let guestWorkDir;
+        let guestWorkDir = sessionMnt;
         if (rawCwd.includes('/mnt/')) {
             guestWorkDir = rawCwd;
         } else {
             const primaryMount = Object.keys(mountMap).find(
                 n => !n.startsWith('.') && n !== 'uploads',
             );
-            guestWorkDir = primaryMount
-                ? `${sessionMnt}/${primaryMount}`
-                : sessionMnt;
-            if (!primaryMount) {
+            if (primaryMount) {
+                guestWorkDir = `${sessionMnt}/${primaryMount}`;
+            } else {
                 log('BwrapBackend spawn: warning: no primary mount found, cwd set to session root');
             }
         }
@@ -909,8 +907,7 @@ class BwrapBackend extends LocalBackend {
             ...rawArgs,
         );
 
-        log(`BwrapBackend spawn: bwrap args=${JSON.stringify(bwrapArgs)}`);
-        log(`BwrapBackend spawn: cwd=${guestWorkDir}`);
+        log(`BwrapBackend spawn: cwd=${guestWorkDir}, bwrap args=${JSON.stringify(bwrapArgs)}`);
 
         // Use host-side cwd for Node's spawn (guest paths don't exist
         // on host). bwrap --chdir sets the actual cwd inside the sandbox.
