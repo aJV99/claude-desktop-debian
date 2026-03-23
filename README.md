@@ -174,6 +174,7 @@ Special thanks to:
 - **[milog1994](https://github.com/milog1994)** for Linux UX improvements including popup detection, functional stubs, and Wayland compositor support
 - **[jarrodcolburn](https://github.com/jarrodcolburn)** for passwordless sudo support in container/CI environments and identifying the gh-pages 4GB bloat fix
 - **[chukfinley](https://github.com/chukfinley)** for experimental Cowork mode support on Linux
+- **[CyPack](https://github.com/CyPack)** for orphaned cowork daemon cleanup on startup
 - **[IliyaBrook](https://github.com/IliyaBrook)** for fixing the platform patch for Claude Desktop >= 1.1.3541 arm64 refactor
 - **[MichaelMKenny](https://github.com/MichaelMKenny)** for diagnosing the `$`-prefixed electron variable bug with root cause analysis and workaround
 - **[daa25209](https://github.com/daa25209)** for detailed root cause analysis of the cowork platform gate crash and patch script
