@@ -4,6 +4,12 @@
 
 This project repackages Claude Desktop (Electron app) for Debian/Ubuntu Linux, applying necessary patches for Linux compatibility.
 
+## Learnings
+
+The [`docs/learnings/`](docs/learnings/) directory contains hard-won technical knowledge from debugging and fixing issues — things that aren't obvious from reading the code or docs alone. Consult these before working on related areas. Add new entries when you discover something non-obvious that would save future contributors (human or AI) significant time.
+
+- [`nix.md`](docs/learnings/nix.md) — NixOS packaging, Electron resource path resolution, testing without NixOS
+
 ## Code Style
 
 All shell scripts in this project must follow the [Bash Style Guide](STYLEGUIDE.md). Key points:
