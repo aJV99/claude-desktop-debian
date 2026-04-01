@@ -128,8 +128,8 @@ stdenvNoCC.mkDerivation {
     # Symlink everything else from electron-unwrapped
     for item in ${electronDir}/*; do
       name=$(basename "$item")
-      [ "$name" = "electron" ] && continue
-      [ "$name" = "resources" ] && continue
+      [[ "$name" = "electron" ]] && continue
+      [[ "$name" = "resources" ]] && continue
       ln -s "$item" "$electron_tree/$name"
     done
 
@@ -144,20 +144,19 @@ stdenvNoCC.mkDerivation {
 
     # Install tray icons into resources
     for tray_icon in build/electron-app/nix-resources/Tray*; do
-      if [ -f "$tray_icon" ]; then
-        cp "$tray_icon" $electron_tree/resources/
-      fi
+      [[ -f "$tray_icon" ]] && cp "$tray_icon" $electron_tree/resources/
     done
 
     # Install SSH helpers into resources
-    if [ -d build/electron-app/nix-resources/claude-ssh ]; then
-      cp -r build/electron-app/nix-resources/claude-ssh $electron_tree/resources/
+    if [[ -d build/electron-app/nix-resources/claude-ssh ]]; then
+      cp -r build/electron-app/nix-resources/claude-ssh \
+        $electron_tree/resources/
     fi
 
     # Install cowork resources (smol-bin, plugin shim)
     for cowork_res in build/electron-app/nix-resources/smol-bin.*.vhdx \
                       build/electron-app/nix-resources/cowork-plugin-shim.sh; do
-      if [ -f "$cowork_res" ]; then
+      if [[ -f "$cowork_res" ]]; then
         cp "$cowork_res" $electron_tree/resources/
         echo "Installed cowork resource: $(basename "$cowork_res")"
       fi
@@ -165,9 +164,8 @@ stdenvNoCC.mkDerivation {
 
     # Install locale JSON files into resources
     for locale_json in build/claude-extract/lib/net45/resources/*-*.json; do
-      if [ -f "$locale_json" ]; then
-        cp "$locale_json" $electron_tree/resources/
-      fi
+      [[ -f "$locale_json" ]] \
+        && cp "$locale_json" $electron_tree/resources/
     done
 
     # Create the electron wrapper — replicates the env setup from the
@@ -175,7 +173,7 @@ stdenvNoCC.mkDerivation {
     # execs our custom binary.  We extract everything except the final
     # exec line from the stock wrapper, then append our own exec.
     head -n -1 ${electron}/bin/electron > $electron_tree/electron-wrapper
-    echo "exec \"$electron_tree/electron\"  \"\$@\"" >> $electron_tree/electron-wrapper
+    echo "exec \"$electron_tree/electron\" \"\$@\"" >> $electron_tree/electron-wrapper
     chmod +x $electron_tree/electron-wrapper
 
     # Update CHROME_DEVEL_SANDBOX to point to our tree's chrome-sandbox
@@ -188,7 +186,6 @@ stdenvNoCC.mkDerivation {
     #==========================================================================
 
     # Convenience symlink for resources dir (used by launcher, FHS, etc.)
-    mkdir -p $out/lib/claude-desktop
     ln -s $electron_tree/resources $out/lib/claude-desktop/resources
 
     # Install icons
@@ -196,7 +193,7 @@ stdenvNoCC.mkDerivation {
       icon_dir=$out/share/icons/hicolor/"$size"x"$size"/apps
       mkdir -p "$icon_dir"
       icon=$(find build/ -name "claude_*''${size}x''${size}x32.png" 2>/dev/null | head -1)
-      if [ -n "$icon" ]; then
+      if [[ -n "$icon" ]]; then
         install -Dm644 "$icon" "$icon_dir/claude-desktop.png"
       fi
     done
