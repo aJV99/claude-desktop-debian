@@ -1494,58 +1494,54 @@ if (serviceErrorIdx !== -1) {
 
 // ============================================================
 // Patch 10: Register quit handler for cowork daemon cleanup
-// The upstream cowork-vm-shutdown handler uses the Swift VM addon
-// which isn't available on Linux, so it's never registered.
-// Register our own handler via registerQuitHandler to send
-// SIGTERM to the forked daemon on app quit.
+// The upstream vm-shutdown handler uses a Swift addon unavailable
+// on Linux. Register our own to SIGTERM the daemon on app quit.
 // ============================================================
-const quitFnRe = /registerQuitHandler:\s*(\w+)/;
-const quitFnMatch = code.match(quitFnRe);
-if (quitFnMatch) {
-    const quitFn = quitFnMatch[1];
-    console.log('  Found registerQuitHandler function: ' + quitFn);
+{
+    const quitFnRe = /registerQuitHandler:\s*(\w+)/;
+    const quitFnMatch = code.match(quitFnRe);
+    if (quitFnMatch) {
+        const quitFn = quitFnMatch[1];
+        console.log('  Found registerQuitHandler function: ' + quitFn);
 
-    // Inject after the registerQuitHandler definition.
-    // hd is defined as: function hd(t){ARRAY.push(t)}
-    const quitFnDef = 'function ' + quitFn + '(';
-    const quitFnDefIdx = code.indexOf(quitFnDef);
-    if (quitFnDefIdx !== -1) {
-        // Find the end of the function body
-        const fnBlock = extractBlock(code, quitFnDefIdx, '{');
-        if (fnBlock) {
-            const insertIdx = quitFnDefIdx +
-                code.substring(quitFnDefIdx).indexOf(fnBlock) +
-                fnBlock.length;
-            const shutdownHandler =
-                'process.platform==="linux"&&' + quitFn + '({' +
-                'name:"cowork-linux-daemon-shutdown",' +
-                'fn:async()=>{' +
-                'const _p=global.__coworkDaemonPid;' +
-                'if(!_p)return;' +
-                'try{const _cmd=require("fs").readFileSync(' +
-                '"/proc/"+_p+"/cmdline","utf8");' +
-                'if(!_cmd.includes("cowork-vm-service"))return' +
-                '}catch(_e){return}' +
-                'try{process.kill(_p,"SIGTERM")}catch(_e){return}' +
-                'for(let _i=0;_i<50;_i++){' +
-                'await new Promise(_r=>setTimeout(_r,200));' +
-                'try{process.kill(_p,0)}catch(_e){return}' +
-                '}}});';
-            code = code.substring(0, insertIdx) +
-                shutdownHandler + code.substring(insertIdx);
-            console.log('  Registered Linux cowork daemon quit handler');
-            patchCount++;
+        const quitFnDef = 'function ' + quitFn + '(';
+        const quitFnDefIdx = code.indexOf(quitFnDef);
+        if (quitFnDefIdx !== -1) {
+            const fnBlock = extractBlock(code, quitFnDefIdx, '{');
+            if (fnBlock) {
+                const insertIdx = code.indexOf(fnBlock, quitFnDefIdx) +
+                    fnBlock.length;
+                const shutdownHandler =
+                    'process.platform==="linux"&&' + quitFn + '({' +
+                    'name:"cowork-linux-daemon-shutdown",' +
+                    'fn:async()=>{' +
+                    'const _p=global.__coworkDaemonPid;' +
+                    'if(!_p)return;' +
+                    'try{const _cmd=require("fs").readFileSync(' +
+                    '"/proc/"+_p+"/cmdline","utf8");' +
+                    'if(!_cmd.includes("cowork-vm-service"))return' +
+                    '}catch(_e){return}' +
+                    'try{process.kill(_p,"SIGTERM")}catch(_e){return}' +
+                    'for(let _i=0;_i<50;_i++){' +
+                    'await new Promise(_r=>setTimeout(_r,200));' +
+                    'try{process.kill(_p,0)}catch(_e){return}' +
+                    '}}});';
+                code = code.substring(0, insertIdx) +
+                    shutdownHandler + code.substring(insertIdx);
+                console.log('  Registered Linux cowork daemon quit handler');
+                patchCount++;
+            } else {
+                console.log('  WARNING: Could not find ' + quitFn +
+                    ' function body for quit handler');
+            }
         } else {
             console.log('  WARNING: Could not find ' + quitFn +
-                ' function body for quit handler');
+                ' function definition');
         }
     } else {
-        console.log('  WARNING: Could not find ' + quitFn +
-            ' function definition');
+        console.log('  WARNING: Could not find registerQuitHandler' +
+            ' export for quit handler');
     }
-} else {
-    console.log('  WARNING: Could not find registerQuitHandler' +
-        ' export for quit handler');
 }
 
 fs.writeFileSync(indexJs, code);
