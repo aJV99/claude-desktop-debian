@@ -223,7 +223,9 @@ Special thanks to:
 - **[arauhala](https://github.com/arauhala)** for detailed root cause analysis of the NixOS `isPackaged` regression
 - **[cromagnone](https://github.com/cromagnone)** for confirming the VM download loop on bwrap installs with detailed logs that disproved the initial triage
 - **[aHk-coder](https://github.com/aHk-coder)** for diagnosing the hardcoded minified variable crash in the cowork smol-bin patch
-- **[RayCharlizard](https://github.com/RayCharlizard)** for detailed analysis of the self-referential `.mcpb-cache` symlink ELOOP bug
+- **[RayCharlizard](https://github.com/RayCharlizard)**
+  - Detailed analysis of the self-referential `.mcpb-cache` symlink ELOOP bug
+  - Fixing auto-memory path translation on HostBackend
 - **[reinthal](https://github.com/reinthal)** for fixing the NixOS build breakage caused by the nixpkgs `nodePackages` removal
 - **[gianluca-peri](https://github.com/gianluca-peri)**
   - Reporting the GNOME quit accessibility issue
