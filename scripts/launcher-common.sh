@@ -16,6 +16,32 @@ log_message() {
 	echo "$1" >> "$log_file"
 }
 
+# Detect the display scaling factor for HiDPI auto-detection.
+# Prints a number > 1 if HiDPI is active, empty string otherwise.
+# Supports GNOME (gsettings) and KDE (kreadconfig6).
+_get_hidpi_scale() {
+	local desktop="${XDG_CURRENT_DESKTOP:-}"
+	desktop="${desktop,,}"
+
+	# GNOME: scaling-factor is "uint32 N" — extract the number
+	if command -v gsettings &>/dev/null \
+		&& [[ $desktop == *gnome* || $desktop == *unity* ]]; then
+		local raw
+		raw=$(gsettings get \
+			org.gnome.desktop.interface scaling-factor \
+			2>/dev/null) || true
+		printf '%s' "${raw##* }"
+		return
+	fi
+
+	# KDE: ScaleFactor is a float (e.g. "2" or "1.5")
+	if command -v kreadconfig6 &>/dev/null; then
+		kreadconfig6 --file kdeglobals \
+			--group KScreen --key ScaleFactor 2>/dev/null || true
+		return
+	fi
+}
+
 # Detect display backend (Wayland vs X11)
 # Sets: is_wayland, use_x11_on_wayland
 detect_display_backend() {
@@ -24,7 +50,10 @@ detect_display_backend() {
 	[[ -n "${WAYLAND_DISPLAY:-}" ]] && is_wayland=true
 
 	# Default: Use X11/XWayland on Wayland for global hotkey support
-	# Set CLAUDE_USE_WAYLAND=1 to use native Wayland (global hotkeys disabled)
+	# CLAUDE_USE_WAYLAND=1    — force native Wayland
+	# CLAUDE_USE_WAYLAND=auto — native Wayland only when HiDPI detected
+	# CLAUDE_USE_WAYLAND=0    — force XWayland (opt-out)
+	# (unset)                 — XWayland default
 	use_x11_on_wayland=true
 	[[ "${CLAUDE_USE_WAYLAND:-}" == '1' ]] && use_x11_on_wayland=false
 
@@ -40,6 +69,21 @@ detect_display_backend() {
 
 		if [[ -n "${NIRI_SOCKET:-}" || "$desktop" == *niri* ]]; then
 			log_message "Niri detected - forcing native Wayland"
+			use_x11_on_wayland=false
+		fi
+	fi
+
+	# CLAUDE_USE_WAYLAND=auto: switch to native Wayland only when HiDPI
+	# is detected. XWayland upscales a low-res framebuffer which causes
+	# blurry rendering on displays with a scale factor > 1.
+	# Set CLAUDE_USE_WAYLAND=0 to keep XWayland even on HiDPI displays.
+	if [[ $is_wayland == true && $use_x11_on_wayland == true \
+		&& "${CLAUDE_USE_WAYLAND:-}" == 'auto' ]]; then
+		local scale
+		scale=$(_get_hidpi_scale)
+		# Match integers or floats greater than 1 (e.g. "2", "1.5")
+		if [[ -n $scale ]] && awk "BEGIN{exit !($scale > 1)}" 2>/dev/null; then
+			log_message "HiDPI detected (scale=$scale) - using native Wayland"
 			use_x11_on_wayland=false
 		fi
 	fi
@@ -443,13 +487,34 @@ run_doctor() {
 		_pass "Display server: Wayland (WAYLAND_DISPLAY=$WAYLAND_DISPLAY)"
 		local desktop="${XDG_CURRENT_DESKTOP:-unknown}"
 		_info "Desktop: $desktop"
-		if [[ "${CLAUDE_USE_WAYLAND:-}" == '1' ]]; then
-			_info 'Mode: native Wayland (CLAUDE_USE_WAYLAND=1)'
-		else
-			_info 'Mode: X11 via XWayland (default, for global hotkey support)'
-			_info 'Tip: Set CLAUDE_USE_WAYLAND=1 for native Wayland'
-			_info '     (disables global hotkeys)'
-		fi
+		case "${CLAUDE_USE_WAYLAND:-}" in
+			1)
+				_info 'Mode: native Wayland (CLAUDE_USE_WAYLAND=1)'
+				;;
+			auto)
+				local _scale
+				_scale=$(_get_hidpi_scale)
+				if [[ -n $_scale ]] \
+					&& awk "BEGIN{exit !($_scale > 1)}" 2>/dev/null; then
+					_info \
+						"Mode: native Wayland" \
+						"(CLAUDE_USE_WAYLAND=auto, HiDPI scale=${_scale})"
+				else
+					_info \
+						'Mode: X11 via XWayland' \
+						'(CLAUDE_USE_WAYLAND=auto, no HiDPI detected)'
+				fi
+				;;
+			*)
+				_info \
+					'Mode: X11 via XWayland' \
+					'(default, for global hotkey support)'
+				_info \
+					'Tip: Set CLAUDE_USE_WAYLAND=1 for native Wayland,' \
+					'or =auto to switch only on HiDPI'
+				_info '     (native Wayland disables global hotkeys)'
+				;;
+		esac
 	elif [[ -n "${DISPLAY:-}" ]]; then
 		_pass "Display server: X11 (DISPLAY=$DISPLAY)"
 	else
